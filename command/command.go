@@ -73,6 +73,24 @@ func addToPlaylist() {
 	spotify.AddToPlaylist(playlist.ID, song.URI)
 }
 
+func removeFromCurrentPlaylist() {
+	playlist := spotify.GetCurrentPlaylist()
+	if playlist == nil {
+		fmt.Println("Could not get current playlist")
+		return
+	}
+
+	song := spotify.GetCurrentSong()
+	if song == nil {
+		fmt.Println("Could not get current song")
+		return
+	}
+
+	fmt.Printf("Removing %s from current playlist\n", song.Name)
+
+	spotify.RemoveFromPlaylist(playlist.ID, song.URI)
+}
+
 func getInt(min int, max int) (int, error) {
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -110,6 +128,8 @@ func Listen() {
 			volume(scanner.Text())
 		} else if scanner.Text() == "add" {
 			addToPlaylist()
+		} else if scanner.Text() == "remove" {
+			removeFromCurrentPlaylist()
 		} else if scanner.Text() == "exit" {
 			fmt.Println("Exiting...")
 			return

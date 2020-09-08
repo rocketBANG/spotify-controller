@@ -2,7 +2,9 @@ package spotify
 
 import (
 	"fmt"
+	"log"
 	"strconv"
+	"strings"
 )
 
 // Returns false if code should not continue
@@ -17,22 +19,22 @@ func handleError(err *ErrorResult) bool {
 
 // Pause will pause spotify
 func Pause() {
-	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/pause")
+	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/pause", nil)
 }
 
 // Play will play spotify
 func Play() {
-	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/play")
+	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/play", nil)
 }
 
 // Next will go to the next track
 func Next() {
-	makeAuthReq("POST", "https://api.spotify.com/v1/me/player/next")
+	makeAuthReq("POST", "https://api.spotify.com/v1/me/player/next", nil)
 }
 
 // Prev will go to the previous track
 func Prev() {
-	makeAuthReq("POST", "https://api.spotify.com/v1/me/player/previous")
+	makeAuthReq("POST", "https://api.spotify.com/v1/me/player/previous", nil)
 }
 
 // GetPlaylists will get the playlists for the current spotify user
@@ -69,6 +71,20 @@ func GetCurrentSong() *Song {
 	}
 }
 
+// GetCurrentPlaylist returns the ID from the current playlist
+func GetCurrentPlaylist() *Playlist {
+	currentlyPlaying := getCurrentlyPlaying()
+
+	if currentlyPlaying.Context.Type != "playlist" {
+		fmt.Println("Could not get current playlist")
+		return nil
+	}
+
+	return &Playlist{
+		ID: getIDFromURI(currentlyPlaying.Context.URI),
+	}
+}
+
 // AddToPlaylist will attempt to add the given song to the playlist
 func AddToPlaylist(playlistID string, songURI string) {
 	// TODO need to check if item already exists
@@ -81,10 +97,35 @@ func AddToPlaylist(playlistID string, songURI string) {
 
 }
 
+// RemoveFromPlaylist will attempt to remove the given song from the given playlist
+func RemoveFromPlaylist(playlistID string, songURI string) {
+	body := map[string][]deletePlaylistBody{
+		"tracks": []deletePlaylistBody{deletePlaylistBody{
+			URI: songURI,
+		}},
+	}
+
+	url := fmt.Sprintf("https://api.spotify.com/v1/playlists/%s/tracks?uris=%s", playlistID, songURI)
+	err := tryMakeReq2("DELETE", url, nil, body)
+	if !handleError(err) {
+		return
+	}
+
+}
+
 // SetVolume will change the spotify volume to the given value
 func SetVolume(percent int) {
 	percentStr := strconv.Itoa(percent)
-	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/volume?volume_percent="+percentStr)
+	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/volume?volume_percent="+percentStr, nil)
+}
+
+func getIDFromURI(URI string) string {
+	splitURI := strings.Split(URI, ":")
+	if len(splitURI) == 0 {
+		log.Fatalf("Could not find id from URI %s\n", splitURI)
+		return ""
+	}
+	return splitURI[len(splitURI)-1]
 }
 
 func getCurrentlyPlaying() *currentlyPlayingRes {
@@ -138,10 +179,14 @@ type Song struct {
 	URI  string
 }
 
-// Song represents a spotify playlist
+// Playlist represents a spotify playlist
 type Playlist struct {
 	Name string
 	ID   string
+}
+
+type deletePlaylistBody struct {
+	URI string `json:"uri"`
 }
 
 type currentlyPlayingRes struct {
