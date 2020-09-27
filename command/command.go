@@ -163,7 +163,7 @@ func clonePlaylist() {
 
 func help() {
 	fmt.Println("Possible commands are:")
-	fmt.Printf("pause, play, list, add, remove, exit, shuffle, clone, next, prev, duplicate, track")
+	fmt.Printf("pause, play, list, add, remove, exit, shuffle, clone, next, prev, duplicate, track\n")
 }
 
 func choosePlaylist() *spotify.Playlist {
