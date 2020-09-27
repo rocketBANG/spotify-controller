@@ -143,8 +143,11 @@ func Authorise(code string) {
 	}
 
 	result := &AuthResult{}
-	fmt.Println(resp.Status)
-	fmt.Println(resp.StatusCode)
+
+	if config.Debug {
+		fmt.Println(resp.Status)
+		fmt.Println(resp.StatusCode)
+	}
 
 	if resp.StatusCode == 400 {
 		errorResult := &ErrorResult{}
@@ -154,9 +157,12 @@ func Authorise(code string) {
 	}
 
 	json.NewDecoder(resp.Body).Decode(result)
-	fmt.Println(result)
-	authRes = result
 
+	if config.Debug {
+		fmt.Println(result)
+	}
+
+	authRes = result
 }
 
 // AuthResult is the result from the spotify auth method

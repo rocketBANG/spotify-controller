@@ -9,6 +9,7 @@ import (
 
 	"github.com/pkg/browser"
 	"github.com/rocketbang/spotify-controller/command"
+	"github.com/rocketbang/spotify-controller/config"
 	"github.com/rocketbang/spotify-controller/spotify"
 )
 
@@ -22,7 +23,10 @@ func callback(w http.ResponseWriter, req *http.Request) {
 	}
 
 	code := codes[0]
-	fmt.Printf("code %s\n", code)
+
+	if config.Value.Debug {
+		fmt.Printf("code %s\n", code)
+	}
 
 	spotify.Authorise(code)
 
@@ -44,7 +48,6 @@ func createScopes(scopes []string) string {
 }
 
 func main() {
-	fmt.Println("Go")
 	scopeString := createScopes([]string{
 		"user-read-private",
 		"user-read-email",
