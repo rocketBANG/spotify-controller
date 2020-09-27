@@ -1,10 +1,15 @@
 package spotify
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/rocketbang/spotify-controller/config"
 )
 
 // Returns false if code should not continue
@@ -25,6 +30,19 @@ func Pause() {
 // Play will play spotify
 func Play() {
 	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/play", nil)
+}
+
+// PlayTracks will play the given tracks
+func PlayTracks(songURIs []string, playlistURI string) {
+	body := &playReq{
+		URIs: songURIs,
+	}
+
+	err := tryMakeReq2("PUT", "https://api.spotify.com/v1/me/player/play", nil, body)
+	if !handleError(err) {
+		return
+	}
+
 }
 
 // Next will go to the next track
@@ -49,9 +67,8 @@ func GetPlaylists() []*Playlist {
 		convertedPlaylists[i] = &Playlist{
 			ID:   playlist.ID,
 			Name: playlist.Name,
+			URI:  playlist.URI,
 		}
-
-		fmt.Println(playlist.Name)
 	}
 	return convertedPlaylists
 }
@@ -65,9 +82,18 @@ func GetCurrentSong() *Song {
 		return nil
 	}
 
+	artist := ""
+	if currentlyPlaying.Item.Artists != nil && len(currentlyPlaying.Item.Artists) > 0 {
+		artist = currentlyPlaying.Item.Artists[0].Name
+	}
+
+	album := currentlyPlaying.Item.Album.Name
+
 	return &Song{
-		Name: currentlyPlaying.Item.Name,
-		URI:  currentlyPlaying.Item.URI,
+		Name:          currentlyPlaying.Item.Name,
+		URI:           currentlyPlaying.Item.URI,
+		PrimaryArtist: artist,
+		Album:         album,
 	}
 }
 
@@ -97,11 +123,40 @@ func AddToPlaylist(playlistID string, songURI string) {
 
 }
 
+// AddManyToPlaylist will attempt to add the given songs to the playlist with no limit
+func AddManyToPlaylist(playlistID string, songURIs []string) {
+	offset := 0
+	for len(songURIs)-offset > 0 {
+		max := offset + 100
+		if max > len(songURIs)-1 {
+			max = len(songURIs) - 1
+		}
+		AddManyToPlaylistWithLimit(playlistID, songURIs[offset:max])
+		offset = offset + 100
+	}
+}
+
+// AddManyToPlaylistWithLimit will attempt to add the given songs to the playlist
+//
+// Limit 100
+func AddManyToPlaylistWithLimit(playlistID string, songURIs []string) {
+	body := map[string][]string{
+		"uris": songURIs,
+	}
+
+	url := fmt.Sprintf("https://api.spotify.com/v1/playlists/%s/tracks", playlistID)
+	err := tryMakeReq2("POST", url, nil, body)
+	if !handleError(err) {
+		return
+	}
+}
+
 // RemoveFromPlaylist will attempt to remove the given song from the given playlist
-func RemoveFromPlaylist(playlistID string, songURI string) {
+func RemoveFromPlaylist(playlistID string, songURI string, positions []int) {
 	body := map[string][]deletePlaylistBody{
-		"tracks": []deletePlaylistBody{deletePlaylistBody{
-			URI: songURI,
+		"name": []deletePlaylistBody{deletePlaylistBody{
+			URI:       songURI,
+			Positions: positions,
 		}},
 	}
 
@@ -113,10 +168,125 @@ func RemoveFromPlaylist(playlistID string, songURI string) {
 
 }
 
+// CreateNewPlaylist will create the given playlist
+func CreateNewPlaylist(userID, playlistName string, isPublic bool) (string, error) {
+	body := &createPlaylistBody{
+		Name:   playlistName,
+		Public: isPublic,
+	}
+
+	res := &newPlaylistReq{}
+
+	url := fmt.Sprintf("https://api.spotify.com/v1/users/%s/playlists", userID)
+	err := tryMakeReq2("POST", url, res, body)
+	if !handleError(err) {
+		return "", errors.New("Could not create playlist")
+	}
+
+	return res.ID, nil
+}
+
+// GetUserID gets the user ID for the currently logged in user
+func GetUserID() (string, error) {
+	userDetails := getUserDetails()
+	if userDetails == nil {
+		return "", errors.New("Could not get user ID")
+	}
+	return userDetails.ID, nil
+}
+
+func getUserDetails() *userDetailReq {
+	userDetails := &userDetailReq{}
+	err := tryMakeReq("GET", "https://api.spotify.com/v1/me", userDetails)
+	if !handleError(err) {
+		return nil
+	}
+
+	return userDetails
+}
+
 // SetVolume will change the spotify volume to the given value
 func SetVolume(percent int) {
 	percentStr := strconv.Itoa(percent)
 	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/volume?volume_percent="+percentStr, nil)
+}
+
+// GetTracksInPlaylist gets all the tracks in a playlist
+func GetTracksInPlaylist(playlistID string) []*PlaylistTrackResItem {
+	url := fmt.Sprintf("https://api.spotify.com/v1/playlists/%s/tracks?limit=100", playlistID)
+	res := &playlistTrackRes{}
+
+	if config.Value.Debug {
+		fmt.Printf("fetching: %s\n", url)
+	}
+
+	err := tryMakeReq("GET", url, res)
+	if !handleError(err) {
+		return nil
+	}
+
+	items := getPagesAsync(url, res, &playlistTrackRes{})
+
+	return items
+}
+
+func getPagesAsync(url string, paging *playlistTrackRes, res interface{}) []*PlaylistTrackResItem {
+	var wg sync.WaitGroup
+
+	pageTotal := paging.Total/paging.Limit + 1
+	resTotal := make([]*PlaylistTrackResItem, paging.Total)
+
+	i := 0
+	for i < pageTotal {
+		offset := i * paging.Limit
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			res := getSinglePage(url, offset)
+			for resIndex := range res.Items {
+				resTotal[resIndex+offset] = &res.Items[resIndex]
+			}
+		}()
+		i++
+	}
+	wg.Wait()
+	return resTotal
+}
+
+func getSinglePage(url string, offset int) *playlistTrackRes {
+	parsedURL := fmt.Sprintf("%s&offset=%d", url, offset)
+	res := &playlistTrackRes{}
+
+	if config.Value.Debug {
+		fmt.Printf("fetching: %s\n", parsedURL)
+	}
+
+	err := tryMakeReq("GET", parsedURL, res)
+	if !handleError(err) {
+		return nil
+	}
+	return res
+}
+
+func getNextPage(paging *playlistTrackRes, res interface{}) interface{} {
+	if paging.Next == "" || paging.Total-paging.Limit < paging.Offset {
+		return nil
+	}
+
+	if config.Value.Debug {
+		fmt.Printf("fetching: %s\n", paging.Next)
+	}
+
+	err := tryMakeReq("GET", paging.Next, res)
+	if !handleError(err) {
+		return nil
+	}
+
+	// fmt.Printf("limit: %d, offset: %d, total: %d\n", paging.Limit, paging.Offset, paging.Total)
+	// fmt.Printf("next: %s\n", paging.Next)
+
+	return res
 }
 
 func getIDFromURI(URI string) string {
@@ -175,18 +345,27 @@ type playlistReq struct {
 
 // Song represents a spotify song
 type Song struct {
-	Name string
-	URI  string
+	Name          string
+	URI           string
+	PrimaryArtist string
+	Album         string
 }
 
 // Playlist represents a spotify playlist
 type Playlist struct {
 	Name string
 	ID   string
+	URI  string
 }
 
 type deletePlaylistBody struct {
-	URI string `json:"uri"`
+	URI       string `json:"uri"`
+	Positions []int  `json:"positions"`
+}
+
+type createPlaylistBody struct {
+	Name   string `json:"name"`
+	Public bool   `json:"public"`
 }
 
 type currentlyPlayingRes struct {
@@ -253,4 +432,156 @@ type currentlyPlayingRes struct {
 		Type        string `json:"type"`
 		URI         string `json:"uri"`
 	} `json:"item"`
+}
+
+// Paging is a result for pageable data
+type Paging struct {
+	Limit    int    `json:"limit"`
+	Next     string `json:"next"`
+	Offset   int    `json:"offset"`
+	Previous string `json:"previous"`
+	Total    int    `json:"total"`
+}
+
+type playlistTrackRes struct {
+	Paging
+	Href  string                 `json:"href"`
+	Items []PlaylistTrackResItem `json:"items"`
+}
+
+// PlaylistTrackResItem represents an item in a playlist
+type PlaylistTrackResItem struct {
+	AddedAt time.Time `json:"added_at"`
+	AddedBy struct {
+		ExternalUrls struct {
+			Spotify string `json:"spotify"`
+		} `json:"external_urls"`
+		Href string `json:"href"`
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		URI  string `json:"uri"`
+	} `json:"added_by"`
+	IsLocal bool `json:"is_local"`
+	Track   struct {
+		Album struct {
+			AlbumType string `json:"album_type"`
+			Artists   []struct {
+				ExternalUrls struct {
+					Spotify string `json:"spotify"`
+				} `json:"external_urls"`
+				Href string `json:"href"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Type string `json:"type"`
+				URI  string `json:"uri"`
+			} `json:"artists"`
+			AvailableMarkets []string `json:"available_markets"`
+			ExternalUrls     struct {
+				Spotify string `json:"spotify"`
+			} `json:"external_urls"`
+			Href   string `json:"href"`
+			ID     string `json:"id"`
+			Images []struct {
+				Height int    `json:"height"`
+				URL    string `json:"url"`
+				Width  int    `json:"width"`
+			} `json:"images"`
+			Name string `json:"name"`
+			Type string `json:"type"`
+			URI  string `json:"uri"`
+		} `json:"album"`
+		Artists []struct {
+			ExternalUrls struct {
+				Spotify string `json:"spotify"`
+			} `json:"external_urls"`
+			Href string `json:"href"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			Type string `json:"type"`
+			URI  string `json:"uri"`
+		} `json:"artists"`
+		AvailableMarkets []string `json:"available_markets"`
+		DiscNumber       int      `json:"disc_number"`
+		DurationMs       int      `json:"duration_ms"`
+		Explicit         bool     `json:"explicit"`
+		ExternalIds      struct {
+			Isrc string `json:"isrc"`
+		} `json:"external_ids"`
+		ExternalUrls struct {
+			Spotify string `json:"spotify"`
+		} `json:"external_urls"`
+		Href        string `json:"href"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Popularity  int    `json:"popularity"`
+		PreviewURL  string `json:"preview_url"`
+		TrackNumber int    `json:"track_number"`
+		Type        string `json:"type"`
+		URI         string `json:"uri"`
+	} `json:"track,omitempty"`
+}
+
+type userDetailReq struct {
+	Country      string `json:"country"`
+	DisplayName  string `json:"display_name"`
+	Email        string `json:"email"`
+	ExternalUrls struct {
+		Spotify string `json:"spotify"`
+	} `json:"external_urls"`
+	Followers struct {
+		Href  interface{} `json:"href"`
+		Total int         `json:"total"`
+	} `json:"followers"`
+	Href   string `json:"href"`
+	ID     string `json:"id"`
+	Images []struct {
+		Height interface{} `json:"height"`
+		URL    string      `json:"url"`
+		Width  interface{} `json:"width"`
+	} `json:"images"`
+	Product string `json:"product"`
+	Type    string `json:"type"`
+	URI     string `json:"uri"`
+}
+
+type newPlaylistReq struct {
+	Collaborative bool        `json:"collaborative"`
+	Description   interface{} `json:"description"`
+	ExternalUrls  struct {
+		Spotify string `json:"spotify"`
+	} `json:"external_urls"`
+	Followers struct {
+		Href  interface{} `json:"href"`
+		Total int         `json:"total"`
+	} `json:"followers"`
+	Href   string        `json:"href"`
+	ID     string        `json:"id"`
+	Images []interface{} `json:"images"`
+	Name   string        `json:"name"`
+	Owner  struct {
+		ExternalUrls struct {
+			Spotify string `json:"spotify"`
+		} `json:"external_urls"`
+		Href string `json:"href"`
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		URI  string `json:"uri"`
+	} `json:"owner"`
+	Public     bool   `json:"public"`
+	SnapshotID string `json:"snapshot_id"`
+	Tracks     struct {
+		Href     string        `json:"href"`
+		Items    []interface{} `json:"items"`
+		Limit    int           `json:"limit"`
+		Next     interface{}   `json:"next"`
+		Offset   int           `json:"offset"`
+		Previous interface{}   `json:"previous"`
+		Total    int           `json:"total"`
+	} `json:"tracks"`
+	Type string `json:"type"`
+	URI  string `json:"uri"`
+}
+
+type playReq struct {
+	URIs []string `json:"uris"`
 }

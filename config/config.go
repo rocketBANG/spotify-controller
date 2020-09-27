@@ -10,6 +10,7 @@ import (
 type Config struct {
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
+	Debug        bool   `json:"debug"`
 }
 
 // Load will load the current config
@@ -22,5 +23,9 @@ func Load() Config {
 	if err != nil {
 		fmt.Println("error:", err)
 	}
+	Value = config
 	return config
 }
+
+// Value is the current config value
+var Value Config

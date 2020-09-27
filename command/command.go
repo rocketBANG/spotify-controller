@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/rocketbang/spotify-controller/spotify"
 )
@@ -38,27 +40,8 @@ func volume(command string) {
 }
 
 func addToPlaylist() {
-	playlists := spotify.GetPlaylists()
-
-	if playlists == nil {
-		fmt.Println("Could not get playlists")
-		return
-	}
-
-	fmt.Printf("Choose Playlist:\n")
-	for i, playlist := range playlists {
-		fmt.Printf("%d. %s\n", (i + 1), playlist.Name)
-	}
-
-	playlistNum, err := getInt(1, len(playlists))
-
-	if err != nil {
-		return
-	}
-
-	playlist := playlists[playlistNum-1]
+	playlist := choosePlaylist()
 	if playlist == nil {
-		fmt.Println("Could not get playlist")
 		return
 	}
 
@@ -88,14 +71,131 @@ func removeFromCurrentPlaylist() {
 
 	fmt.Printf("Removing %s from current playlist\n", song.Name)
 
-	spotify.RemoveFromPlaylist(playlist.ID, song.URI)
+	spotify.RemoveFromPlaylist(playlist.ID, song.URI, nil)
+}
+
+func removeDuplicatesInPlaylist() {
+	playlist := choosePlaylist()
+	if playlist == nil {
+		return
+	}
+
+	items := spotify.GetTracksInPlaylist(playlist.ID)
+
+	trackMap := make(map[string]*spotify.PlaylistTrackResItem)
+
+	detectedDuplicate := false
+	for i := range items {
+		item := items[i]
+		track := item.Track
+		prevItem := trackMap[track.ID]
+
+		if trackMap[track.ID] != nil {
+			detectedDuplicate = true
+			fmt.Printf("Found duplicate! %s, %s\n", track.Name, item.AddedAt)
+			fmt.Printf("Previous item %s, %s\n", prevItem.Track.Name, prevItem.AddedAt)
+			fmt.Printf("Remove duplicate? (y/n)\n")
+			remove := getConfirm()
+			if remove {
+				spotify.RemoveFromPlaylist(playlist.ID, track.URI, []int{i})
+			}
+		} else {
+			trackMap[track.ID] = item
+		}
+	}
+
+	if !detectedDuplicate {
+		fmt.Printf("No duplicates found in %s\n", playlist.Name)
+	}
+
+}
+
+func shuffleInNewPlaylist() {
+	fmt.Println("Choose playlist to shuffle")
+	clonedPlaylist := choosePlaylist()
+
+	items := spotify.GetTracksInPlaylist(clonedPlaylist.ID)
+	itemURIs := make([]string, len(items))
+	for i, item := range items {
+		itemURIs[i] = item.Track.URI
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(itemURIs), func(i, j int) { itemURIs[i], itemURIs[j] = itemURIs[j], itemURIs[i] })
+
+	max := 800
+	if max > len(itemURIs)-1 {
+		max = len(itemURIs) - 1
+	}
+	spotify.PlayTracks(itemURIs[0:max], clonedPlaylist.URI)
+}
+
+func clonePlaylist() {
+	userID, err := spotify.GetUserID()
+	if err != nil {
+		fmt.Println("Could not get user id")
+		return
+	}
+
+	fmt.Println("Choose playlist to clone")
+	clonedPlaylist := choosePlaylist()
+
+	fmt.Println("Enter new playlist name (New Playlist)")
+	playlistName := getString("New Playlist")
+
+	playlistID, err := spotify.CreateNewPlaylist(userID, playlistName, false)
+	if err != nil {
+		fmt.Println("Could not create new playlist")
+		return
+	}
+
+	items := spotify.GetTracksInPlaylist(clonedPlaylist.ID)
+	itemURIs := make([]string, len(items))
+	for i, item := range items {
+		itemURIs[i] = item.Track.URI
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(itemURIs), func(i, j int) { itemURIs[i], itemURIs[j] = itemURIs[j], itemURIs[i] })
+
+	spotify.AddManyToPlaylist(playlistID, itemURIs)
+}
+
+func help() {
+	fmt.Println("Possible commands are:")
+	fmt.Printf("pause, play, list, add, remove, exit, shuffle, clone, next, prev, duplicate, track")
+}
+
+func choosePlaylist() *spotify.Playlist {
+	playlists := spotify.GetPlaylists()
+
+	if playlists == nil {
+		fmt.Println("Could not get playlists")
+		return nil
+	}
+
+	fmt.Printf("Choose Playlist:\n")
+	for i, playlist := range playlists {
+		fmt.Printf("%d. %s\n", (i + 1), playlist.Name)
+	}
+
+	playlistNum, err := getInt(1, len(playlists))
+
+	if err != nil {
+		return nil
+	}
+
+	playlist := playlists[playlistNum-1]
+	if playlist == nil {
+		fmt.Println("Could not get playlist")
+		return nil
+	}
+	return playlist
 }
 
 func getInt(min int, max int) (int, error) {
 	scanner := bufio.NewScanner(os.Stdin)
-
 	scanner.Scan()
-
 	intStr := scanner.Text()
 
 	number, err := strconv.Atoi(intStr)
@@ -110,6 +210,29 @@ func getInt(min int, max int) (int, error) {
 	}
 
 	return number, nil
+}
+
+func getString(auto string) string {
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	str := scanner.Text()
+
+	if str == "" {
+		return auto
+	}
+
+	return str
+}
+
+func getConfirm() bool {
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	str := scanner.Text()
+
+	if str == "y" || str == "Y" || str == "yes" {
+		return true
+	}
+	return false
 }
 
 func Listen() {
@@ -133,12 +256,25 @@ func Listen() {
 		} else if scanner.Text() == "exit" {
 			fmt.Println("Exiting...")
 			return
+		} else if scanner.Text() == "shuffle" {
+			fmt.Println("Creating new playlist to shuffle")
+			shuffleInNewPlaylist()
+		} else if scanner.Text() == "clone" {
+			clonePlaylist()
+		} else if scanner.Text() == "help" {
+			help()
 		} else if scanner.Text() == "next" {
 			fmt.Println("Next track")
 			spotify.Next()
 		} else if scanner.Text() == "prev" {
 			fmt.Println("Previous track")
 			spotify.Prev()
+		} else if scanner.Text() == "duplicate" {
+			fmt.Println("Detecting duplicates")
+			removeDuplicatesInPlaylist()
+		} else if scanner.Text() == "track" {
+			song := spotify.GetCurrentSong()
+			fmt.Printf("Current track is: %s by %s. - %s\n", song.Name, song.PrimaryArtist, song.Album)
 		} else {
 			fmt.Println("Unrecongised command")
 		}
