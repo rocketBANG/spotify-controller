@@ -33,9 +33,16 @@ func Play() {
 }
 
 // PlayTracks will play the given tracks
+// Has a maximum limit of 800 (any extra will not be included)
 func PlayTracks(songURIs []string, playlistURI string) {
+	// This maximum isn't documented but the PlayTracks request will constantly fail if max is ~900 so I've set it to 800
+	max := 800
+	if max > len(songURIs)-1 {
+		max = len(songURIs) - 1
+	}
+
 	body := &playReq{
-		URIs: songURIs,
+		URIs: songURIs[0:max],
 	}
 
 	err := tryMakeReq2("PUT", "https://api.spotify.com/v1/me/player/play", nil, body)

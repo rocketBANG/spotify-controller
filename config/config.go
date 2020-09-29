@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -14,17 +15,26 @@ type Config struct {
 }
 
 // Load will load the current config
-func Load() Config {
-	file, _ := os.Open("config.json")
+func Load() error {
+	file, fileErr := os.Open("config.dev.json")
+	if os.IsNotExist(fileErr) {
+		file, fileErr = os.Open("config.json")
+	}
+
+	if os.IsNotExist(fileErr) {
+		return errors.New("No config.json found, refer to readme to setup config.json")
+	}
+
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	config := Config{}
 	err := decoder.Decode(&config)
 	if err != nil {
 		fmt.Println("error:", err)
+		return errors.New("Could not decode config.json")
 	}
 	Value = config
-	return config
+	return nil
 }
 
 // Value is the current config value

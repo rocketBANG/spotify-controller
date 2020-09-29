@@ -48,6 +48,16 @@ func createScopes(scopes []string) string {
 }
 
 func main() {
+	err := config.Load()
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	if config.Value.ClientID == "" || config.Value.ClientSecret == "" {
+		fmt.Println("config.json is not set up correctly")
+		return
+	}
+
 	scopeString := createScopes([]string{
 		"user-read-private",
 		"user-read-email",

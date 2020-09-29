@@ -16,4 +16,4 @@
 # vendor/
 
 # Ignore current config file
-config.json
+config.dev.json

@@ -77,7 +77,7 @@ func tryMakeReq2(method string, url string, result interface{}, body interface{}
 }
 
 func refresh(refreshToken string) {
-	config := config.Load()
+	config := config.Value
 
 	client := &http.Client{}
 
@@ -121,7 +121,7 @@ func refresh(refreshToken string) {
 
 // Authorise will bring up an authorisation dialog for the current user and then populate authRes
 func Authorise(code string) {
-	config := config.Load()
+	config := config.Value
 
 	client := &http.Client{}
 
