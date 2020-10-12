@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Config contains the config for this app
@@ -16,9 +17,16 @@ type Config struct {
 
 // Load will load the current config
 func Load() error {
+	ex, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	dirAbsPath := filepath.Dir(ex)
+
 	file, fileErr := os.Open("config.dev.json")
 	if os.IsNotExist(fileErr) {
-		file, fileErr = os.Open("config.json")
+		file, fileErr = os.Open(filepath.Join(dirAbsPath, "config.json"))
 	}
 
 	if os.IsNotExist(fileErr) {
@@ -28,7 +36,7 @@ func Load() error {
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	config := Config{}
-	err := decoder.Decode(&config)
+	err = decoder.Decode(&config)
 	if err != nil {
 		fmt.Println("error:", err)
 		return errors.New("Could not decode config.json")
