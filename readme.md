@@ -1,4 +1,6 @@
 # Spotify-controller
+## About
+Spotify-controller is a command line interface for spotify. It uses the web api to send commands to spotify.  
 
 ## Setup
 ### Spotify app
