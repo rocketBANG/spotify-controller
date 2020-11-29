@@ -1,0 +1,75 @@
+name: Go
+
+# on:
+#   push:
+#     branches: [ master ]
+#   pull_request:
+#     branches: [ master ]
+
+on:
+  push:
+    # Sequence of patterns matched against refs/tags
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+
+jobs:
+  create_release:
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    runs-on: ubuntu-latest
+    name: Create Release
+    steps: 
+    - name: Create a Release
+      uses: actions/create-release@v1.1.4
+      id: create_release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+
+  build:
+    needs: [create_release]
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+        - os: macos-latest
+          EXTENSION: ""
+          UPLOAD_EXTENSION: "-mac"
+
+        - os: ubuntu-latest
+          EXTENSION: ""
+          UPLOAD_EXTENSION: "-linux"
+
+        - os: windows-latest
+          EXTENSION: ".exe"
+          UPLOAD_EXTENSION:  ".exe"
+    steps:
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v2
+      with:
+        go-version: ^1.13
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Get dependencies
+      run: go get -v -t -d
+
+    - name: Build
+      run: go build -v
+                    
+    - name: Upload Release Asset
+      id: upload-release-asset 
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ./spotify-controller${{matrix.EXTENSION}}
+        asset_name: spotify-controller${{matrix.UPLOAD_EXTENSION}}
+        asset_content_type: application/octet-stream
