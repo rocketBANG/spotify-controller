@@ -148,8 +148,12 @@ func clonePlaylist() {
 		return
 	}
 
+	// Need to wait here because sometimes the playlist isn't created soon enough
+	time.Sleep(time.Duration(4) * time.Second)
+
 	items := spotify.GetTracksInPlaylist(clonedPlaylist.ID)
 	itemURIs := make([]string, len(items))
+
 	for i, item := range items {
 		itemURIs[i] = item.Track.URI
 	}
@@ -291,8 +295,139 @@ func printHelp(commands []*commandStruct, args string) {
 	fmt.Print("\nFor more information use 'help [command]'\n")
 }
 
+type returnedSong struct {
+	Name       string
+	ArtistName string
+}
+
+func getNextNSongs(n int, playlistURI string, abort <-chan struct{}) <-chan *returnedSong {
+	ch := make(chan *returnedSong)
+
+	spotify.SetShuffle(true)
+	spotify.PlayPlaylist(playlistURI)
+	time.Sleep(1 * time.Second)
+
+	go func() {
+		defer close(ch)
+		for i := 0; i < n; i++ {
+			song := spotify.GetCurrentSong()
+
+			select {
+			case ch <- &returnedSong{Name: song.Name, ArtistName: song.PrimaryArtist}:
+				spotify.Next()
+				time.Sleep(250 * time.Millisecond)
+			case <-abort: // receive on closed channel can proceed immediately
+				return
+			}
+		}
+	}()
+
+	return ch
+}
+
+func getNextNSongsSync(n int, playlistURI string) []*returnedSong {
+	abort := make(chan struct{})
+	ch := getNextNSongs(n, playlistURI, abort)
+
+	songs := make([]*returnedSong, n)
+	i := 0
+	for song := range ch {
+		songs[i] = song
+		i++
+	}
+
+	return songs
+}
+
+func getNextNSongsRandom(n int, playlistID string) []*returnedSong {
+	songs := spotify.GetTracksInPlaylist(playlistID)
+
+	rand.Shuffle(len(songs), func(i, j int) {
+		songs[i], songs[j] = songs[j], songs[i]
+	})
+
+	returnedSongs := make([]*returnedSong, n)
+	for i := 0; i < n; i++ {
+		returnedSongs[i] = &returnedSong{Name: songs[i].Track.Name, ArtistName: songs[i].Track.Artists[0].Name}
+	}
+
+	return returnedSongs
+}
+
+func printNextNSongs(n int) {
+	playlist := choosePlaylist()
+	if playlist == nil {
+		return
+	}
+
+	abort := make(chan struct{})
+	ch := getNextNSongs(n, playlist.URI, abort)
+
+	for song := range ch {
+		fmt.Printf("%s - %s\n", song.Name, song.ArtistName)
+	}
+}
+
+func printRandomNSongs(n int) {
+	playlist := choosePlaylist()
+	if playlist == nil {
+		return
+	}
+
+	songs := getNextNSongsRandom(n, playlist.ID)
+
+	for i := 0; i < len(songs); i++ {
+		song := songs[i]
+		fmt.Printf("%s - %s\n", song.Name, song.ArtistName)
+	}
+}
+
+func test() {
+	playlist := choosePlaylist()
+	if playlist == nil {
+		return
+	}
+
+	n := 40
+	totalRounds := 20
+
+	for round := 0; round < totalRounds; round++ {
+		randomSongPos := -1
+		shuffledSongPos := -1
+
+		abort := make(chan struct{})
+		ch := getNextNSongs(n, playlist.URI, abort)
+
+		songIndex := 0
+		for song := range ch {
+			if song.Name == "Drought" {
+				shuffledSongPos = songIndex
+				close(abort)
+			}
+			songIndex++
+		}
+
+		randomSongs := getNextNSongsRandom(n, playlist.ID)
+		// shuffledSongs := getNextNSongsSync(n, playlist.URI)
+
+		for i := 0; i < n; i++ {
+			if randomSongs[i].Name == "Drought" {
+				randomSongPos = i
+			}
+			// if shuffledSongs[i].Name == "Drought" {
+			// 	shuffledSongPos = i
+			// }
+		}
+
+		fmt.Printf("Random: %d, Shuffled: %d\n", randomSongPos, shuffledSongPos)
+	}
+
+}
+
 // Listen will listen for the given commands until the user exits
 func Listen() {
+	rand.Seed(time.Now().UnixNano())
+
 	commands := make([]*commandStruct, 0)
 
 	commands = append(commands, &commandStruct{
@@ -372,9 +507,29 @@ func Listen() {
 		Run:     func(a string) { fmt.Println("0.1.0") },
 		CmdText: []string{"version"},
 	})
+	commands = append(commands, &commandStruct{
+		Name:    "Upcoming",
+		Help:    "Prints the next 50 songs in the play queue from a given playlist",
+		Run:     func(a string) { printNextNSongs(50) },
+		CmdText: []string{"upcoming"},
+	})
+	commands = append(commands, &commandStruct{
+		Name:    "Random Upcoming",
+		Help:    "Prints 50 random songs from a given playlist",
+		Run:     func(a string) { printRandomNSongs(50) },
+		CmdText: []string{"rand"},
+	})
+	commands = append(commands, &commandStruct{
+		Name:    "Run test",
+		Help:    "Tests spotify shuffle feature",
+		Run:     func(a string) { test() },
+		CmdText: []string{"test"},
+	})
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
+		// TODO add error handling here
+		// TODO need to add a message after the command is run
 		didRun := runCommand(commands, scanner.Text())
 		if didRun {
 			continue

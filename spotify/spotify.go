@@ -32,6 +32,18 @@ func Play() {
 	makeAuthReq("PUT", "https://api.spotify.com/v1/me/player/play", nil)
 }
 
+// PlayPlaylist will play the given playlist URI
+func PlayPlaylist(playlistURI string) {
+	body := map[string]string{
+		"context_uri": playlistURI,
+	}
+	err := tryMakeReq2("PUT", "https://api.spotify.com/v1/me/player/play", nil, body)
+	if !handleError(err) {
+		fmt.Println("Play error")
+		return
+	}
+}
+
 // PlayTracks will play the given tracks
 // Has a maximum limit of 800 (any extra will not be included)
 func PlayTracks(songURIs []string, playlistURI string) {
@@ -78,6 +90,21 @@ func GetPlaylists() []*Playlist {
 		}
 	}
 	return convertedPlaylists
+}
+
+// SetShuffle will set the shuffle status on the device (true = shuffled, false = not shuffled)
+func SetShuffle(shouldShuffle bool) {
+	shouldShuffleString := "false"
+	if shouldShuffle {
+		shouldShuffleString = "true"
+	}
+
+	url := fmt.Sprintf("https://api.spotify.com/v1/me/player/shuffle?state=%s", shouldShuffleString)
+
+	err := tryMakeReq("PUT", url, nil)
+	if !handleError(err) {
+		return
+	}
 }
 
 // GetCurrentSong will get the currently playing song or nil if there is no song playing
@@ -132,14 +159,16 @@ func AddToPlaylist(playlistID string, songURI string) {
 
 // AddManyToPlaylist will attempt to add the given songs to the playlist with no limit
 func AddManyToPlaylist(playlistID string, songURIs []string) {
+	limit := 100
+
 	offset := 0
 	for len(songURIs)-offset > 0 {
-		max := offset + 100
-		if max > len(songURIs)-1 {
-			max = len(songURIs) - 1
+		max := offset + limit
+		if max > len(songURIs) {
+			max = len(songURIs)
 		}
 		AddManyToPlaylistWithLimit(playlistID, songURIs[offset:max])
-		offset = offset + 100
+		offset = offset + limit
 	}
 }
 
@@ -220,7 +249,8 @@ func SetVolume(percent int) {
 
 // GetTracksInPlaylist gets all the tracks in a playlist
 func GetTracksInPlaylist(playlistID string) []*PlaylistTrackResItem {
-	url := fmt.Sprintf("https://api.spotify.com/v1/playlists/%s/tracks?limit=100", playlistID)
+	fields := "fields=items(track(name,href,id,uri)),total,limit"
+	url := fmt.Sprintf("https://api.spotify.com/v1/playlists/%s/tracks?market=NZ&%s&limit=100", playlistID, fields)
 	res := &playlistTrackRes{}
 
 	if config.Value.Debug {

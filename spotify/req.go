@@ -30,6 +30,8 @@ func makeAuthReq(method string, url string, bodyBuffer *bytes.Buffer) *http.Resp
 	// TODO more error handling
 
 	req.Header.Add("Authorization", "Bearer "+authRes.AccessToken)
+	req.Header.Add("Content-Type", "application/json")
+
 	res, _ := client.Do(req)
 
 	if res.StatusCode == 401 {
@@ -61,10 +63,13 @@ func tryMakeReq2(method string, url string, result interface{}, body interface{}
 
 	resp := makeAuthReq(method, url, bodyBytes)
 
-	if resp.StatusCode == 400 {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		errorResult := &ErrorResult{}
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		newStr := buf.String()
+		fmt.Printf("Failed req with code %d %s\n", resp.StatusCode, newStr)
 		json.NewDecoder(resp.Body).Decode(errorResult)
-		fmt.Println(errorResult)
 		return errorResult
 	}
 
@@ -176,8 +181,13 @@ type AuthResult struct {
 
 // ErrorResult is the generic result type from a auth route
 type ErrorResult struct {
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
+	Error ErrorStatus `json:"error"`
+}
+
+// ErrorStatus is the inner error from an error result
+type ErrorStatus struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
 }
 
 // ReqError is the basic error from a route
